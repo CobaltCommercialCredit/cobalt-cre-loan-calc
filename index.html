@@ -83,6 +83,18 @@
 
   .poststab{ margin-top:10px; padding-top:10px; border-top:1px dashed var(--line); font-size:12.5px; color:var(--ink-soft); }
   .poststab b{ color:var(--ink); }
+  .ou-table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  .ou-table th, .ou-table td{ padding:7px 10px; border-bottom:1px solid var(--line); text-align:right; }
+  .ou-table th:first-child, .ou-table td:first-child{ text-align:left; color:var(--ink-soft); font-weight:500; }
+  .ou-table thead th{ font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-faint); font-weight:600; }
+  .ou-table th.sel, .ou-table td.sel{ background:var(--cobalt-tint); }
+  .ou-table td.pass{ color:var(--green); font-weight:600; } .ou-table td.fail{ color:var(--red); font-weight:600; }
+  .ou-flags{ margin:12px 0 0; padding:0; list-style:none; font-size:12.5px; display:flex; flex-direction:column; gap:6px; }
+  .ou-flags li{ padding:8px 11px; border-radius:7px; background:var(--surface-sunk); border-left:3px solid var(--ink-faint); }
+  .ou-flags li.warn{ border-left-color:var(--amber); background:var(--amber-tint); }
+  .ou-flags li.bad{ border-left-color:var(--red); background:var(--red-tint); }
+  .ou-flags li.good{ border-left-color:var(--green); background:var(--green-tint); }
+  .ou-computed{ font-size:12px; color:var(--ink-soft); padding-top:4px; }
 
   .savebar{ display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
   .toast{ position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:10px 18px;
@@ -151,7 +163,7 @@
       <div>
         <div class="eyebrow">Cobalt Commercial Credit</div>
         <h1 class="display">CRE Debt Calculator</h1>
-        <p>Ground-up · acquisition · refi — prequal, evaluate, present</p>
+        <p>Ground-up · acquisition · refi · owner-user SBA — prequal, evaluate, present</p>
       </div>
     </div>
     <div class="actions">
@@ -183,6 +195,7 @@
     <div class="opt" data-type="ground_up"><h3>Ground-Up Construction</h3><p>Land + build, primary calc: LTC</p></div>
     <div class="opt" data-type="acquisition"><h3>Acquisition</h3><p>Purchase, primary calc: LTV / DSCR / Debt Yield</p></div>
     <div class="opt" data-type="refi"><h3>Refinance</h3><p>Existing debt, primary calc: LTV / DSCR / Debt Yield</p></div>
+    <div class="opt" data-type="owner_user"><h3>Owner-User / SBA</h3><p>Purchase + improve, primary calc: Business &amp; Global DSCR / Injection</p></div>
   </div>
 
   <div class="evalbar" id="evalBar"></div>
@@ -234,7 +247,7 @@
     </div>
   </div>
 
-  <div class="panel">
+  <div class="panel" id="thresholdsPanel">
     <div class="panel-head"><h2>Underwriting Thresholds</h2><p>Editable — set to what the target lender actually requires once you know it; these are typical conventional starting points, not universal rules.</p></div>
     <div class="panel-body">
       <div class="field"><label>Max LTV / LTC (%)</label><input type="text" inputmode="decimal" id="ltvMaxPct"></div>
@@ -383,8 +396,324 @@
         '<div class="field span3"><label>Reason for refi</label><textarea id="refiReason"></textarea></div>'+
         '</div></div>';
     }
+    if(type==='owner_user') return ownerUserTemplate();
     return '';
   }
+  // ---------- Owner-User / SBA (purchase + improve) ----------
+  // Owner-occupied deals are repaid from the operating business, not property NOI.
+  // DSCR is business cash flow (EBITDA + eliminated rent - new ownership costs + leased income)
+  // over all business debt service, with a global check that layers in the guarantor's personal side.
+  var OU_NUM_FIELDS = ['ouRsf','ouOccSf','ouPurchase','ouHard','ouSoft','ouContingency','ouEquip','ouClosing','ouBuildMonths',
+    'ouAsIs','ouAsCompleted','ouBankRate','ouBankAmort','ouCdcRate','ouCdcTerm','ouCdcFeePct',
+    'ou7aRate','ou7aAmort','ou7aGuarPct','ou7aEquityPct','ou7aFeeOverride','ouCashAvail',
+    'ouNetIncome','ouDa','ouIntExp','ouRentSaved','ouOwnCosts','ouRentalIncome','ouOtherBizDs',
+    'ouOwnerComp','ouOtherIncome','ouPersonalDs','ouLiving','ouDscrMin','ouGlobalMin','ouLtvMax'];
+  var OU_SELECT_FIELDS = ['ouInterest','ouProgram'];
+  var OU_CHECK_FIELDS = ['ouStartup','ouSpecialPurpose','ouFinanceIdc'];
+
+  function ouField(id,label,def,hint){
+    return '<div class="field"><label>'+label+(hint?' <small>'+hint+'</small>':'')+'</label><input type="text" inputmode="decimal" id="'+id+'" value="'+(def!=null?def:'')+'"></div>';
+  }
+  function ouCheck(id,label,checked){
+    return '<div class="gate-row"><input type="checkbox" id="'+id+'"'+(checked?' checked':'')+'><label for="'+id+'">'+label+'</label></div>';
+  }
+
+  function ownerUserTemplate(){
+    return ''+
+    '<div class="panel"><div class="panel-head"><h2>Owner-User: Property Interest &amp; Occupancy</h2><p>SBA requires the business to occupy at least 51% of the rentable space in an existing building. What counts as the denominator depends on what is being bought.</p></div><div class="panel-body">'+
+      '<div class="field"><label>What is being purchased</label><select id="ouInterest"><option value="whole">Whole building</option><option value="condo">Commercial condo unit (e.g. one floor)</option></select></div>'+
+      ouField('ouRsf','Rentable SF being purchased',null,'Condo: the unit only. Whole building: the entire building.')+
+      ouField('ouOccSf','SF occupied by the practice')+
+      '<div class="field span3" style="display:flex;flex-direction:column;gap:8px;">'+
+        ouCheck('ouStartup','Operating business under 2 years (new practice or newly formed entity)')+
+        ouCheck('ouSpecialPurpose','Special purpose property (e.g. surgery center, heavily specialized build-out)')+
+      '</div>'+
+    '</div></div>'+
+
+    '<div class="panel"><div class="panel-head"><h2>Owner-User: Project Uses</h2><p>Equity and loan sizing run off total project cost, not purchase price.</p></div><div class="panel-body">'+
+      ouField('ouPurchase','Purchase price')+
+      ouField('ouHard','Improvements / build-out hard costs')+
+      ouField('ouSoft','Soft costs',null,'Architect, permits, engineering')+
+      ouField('ouContingency','Contingency',null,'10% of hard costs is a common lender expectation')+
+      ouField('ouEquip','FF&amp;E / medical equipment in project',null,'504 wants long-lived equipment; short-lived gear often goes better as separate equipment finance')+
+      ouField('ouClosing','Closing costs',null,'Title, escrow, appraisal, environmental, legal')+
+      ouField('ouBuildMonths','Construction period (months)',6)+
+      '<div class="field span2" style="justify-content:flex-end;">'+ouCheck('ouFinanceIdc','Finance interest during construction into the project',true)+'<div class="ou-computed" id="ouIdcNote"></div></div>'+
+    '</div></div>'+
+
+    '<div class="panel"><div class="panel-head"><h2>Owner-User: Valuation</h2><p>Lender sizes collateral on the as-completed appraisal. A collateral shortfall alone does not kill an SBA deal, but it triggers additional collateral requests.</p></div><div class="panel-body cols2">'+
+      ouField('ouAsIs','As-is appraised value')+
+      ouField('ouAsCompleted','As-completed appraised value')+
+    '</div></div>'+
+
+    '<div class="panel"><div class="panel-head"><h2>Owner-User: Practice Cash Flow</h2><p>Annual figures. The debt gets repaid from the practice, so this is the primary test.</p></div><div class="panel-body">'+
+      ouField('ouNetIncome','Practice net income (pre-tax)')+
+      ouField('ouDa','Depreciation &amp; amortization')+
+      ouField('ouIntExp','Interest expense',null,'Add-back. Any debt that stays must go in other business debt service below.')+
+      ouField('ouRentSaved','Current annual rent eliminated',null,'Rent the practice stops paying once it owns. Usually the biggest add-back.')+
+      ouField('ouOwnCosts','New annual ownership costs',null,'Property tax at purchase price reassessment, insurance, maintenance, HOA/CAM')+
+      ouField('ouRentalIncome','Net income from leased-out space',null,'Only space the practice does not occupy')+
+      ouField('ouOtherBizDs','Other business debt service that remains',null,'Annual P&amp;I on equipment loans, LOC, etc.')+
+    '</div></div>'+
+
+    '<div class="panel"><div class="panel-head"><h2>Owner-User: Guarantor Global Cash Flow</h2><p>Lenders run a global DSCR combining the practice and the doctor personally.</p></div><div class="panel-body">'+
+      ouField('ouOwnerComp','Owner W-2 / guaranteed payments',null,'Only if already deducted in practice net income')+
+      ouField('ouOtherIncome','Other personal income',null,'Spouse W-2, investment income, etc.')+
+      ouField('ouPersonalDs','Personal debt service',null,'Annual: home mortgage, autos, student loans')+
+      ouField('ouLiving','Living expenses incl. personal taxes',null,'Annual')+
+      ouField('ouCashAvail','Cash available for equity injection',null,'Verified liquid funds the doctor will put in')+
+    '</div></div>'+
+
+    '<div class="panel"><div class="panel-head"><h2>Owner-User: SBA Structure &amp; Terms</h2><p>Both programs are calculated side by side. The selected one drives the evaluation bar, the report and the Pipeline hand-off. Fees are editable; verify the current SBA fiscal year schedule before quoting.</p></div><div class="panel-body">'+
+      '<div class="field"><label>Program to evaluate</label><select id="ouProgram"><option value="504">SBA 504</option><option value="7a">SBA 7(a)</option></select></div>'+
+      ouField('ouDscrMin','Min business DSCR (x)',1.25,'SBA floor is 1.15x; most banks want 1.25x')+
+      ouField('ouGlobalMin','Min global DSCR (x)',1.15)+
+      ouField('ouLtvMax','Max LTV on as-completed (%)',90)+
+      '<div class="field span2"></div>'+
+      ouField('ouBankRate','504 bank first lien rate (%)')+
+      ouField('ouBankAmort','504 bank amortization (years)',25)+
+      ouField('ouCdcRate','504 CDC debenture all-in rate (%)',null,'Fixed; include CDC servicing and SBA annual fee')+
+      ouField('ouCdcTerm','504 debenture term (years)',25)+
+      ouField('ouCdcFeePct','504 debenture fees financed (% of CDC portion)',2.65,'Verify with the CDC')+
+      '<div class="field"></div>'+
+      ouField('ou7aRate','7(a) rate (%)',null,'Usually variable, Prime plus spread')+
+      ouField('ou7aAmort','7(a) amortization (years)',25)+
+      ouField('ou7aEquityPct','7(a) equity injection (%)',10,'Lender policy; 10% is the common floor')+
+      ouField('ou7aGuarPct','7(a) guaranteed portion (%)',75)+
+      ouField('ou7aFeeOverride','7(a) upfront guaranty fee override (%)',null,'Blank uses the tiered FY2027 schedule on the guaranteed portion')+
+    '</div></div>'+
+
+    '<div class="panel"><div class="panel-head"><h2>Owner-User: 504 vs 7(a)</h2></div><div class="panel-body"><div class="field span3" id="ouResults"></div></div></div>';
+  }
+
+  function ouv(id){ var el=$(id); return el ? num(el.value) : null; }
+  function ouchk(id){ var el=$(id); return !!(el && el.checked); }
+
+  // FY2027 7(a) upfront guaranty fee, maturities over 12 months, standard borrowers.
+  function sba7aUpfrontFee(loan, guarPct){
+    var g = loan*guarPct;
+    if(loan<=150000) return g*0.02;
+    if(loan<=700000) return g*0.03;
+    return Math.min(g,1000000)*0.035 + Math.max(0,g-1000000)*0.0375;
+  }
+
+  function computeOU(){
+    var r = {};
+    var purchase=ouv('ouPurchase')||0, hard=ouv('ouHard')||0, soft=ouv('ouSoft')||0, cont=ouv('ouContingency')||0,
+        equip=ouv('ouEquip')||0, closing=ouv('ouClosing')||0;
+    r.purchase=purchase; r.hard=hard; r.soft=soft; r.cont=cont; r.equip=equip; r.closing=closing;
+    r.improve = hard+soft+cont+equip;
+    r.baseCost = purchase + r.improve + closing;
+    var months = ouv('ouBuildMonths')||0, finIdc = ouchk('ouFinanceIdc');
+    // Purchase and closing fund at close; improvements draw over the build, so average about half outstanding.
+    var impShare = r.baseCost ? r.improve/r.baseCost : 0;
+    var drawFactor = (1-impShare) + impShare*0.5;
+    function idc(loanAmt, rate){ if(!finIdc || !months || rate==null || !loanAmt || !r.improve) return 0; return loanAmt*(rate/100)*(months/12)*drawFactor; }
+
+    r.startup = ouchk('ouStartup'); r.special = ouchk('ouSpecialPurpose');
+    r.program = ($('ouProgram') && $('ouProgram').value) || '504';
+
+    // ---- 504: 50% bank / 40% CDC / 10% borrower, injection steps up for startup and special purpose
+    var inj = 0.10 + (r.startup?0.05:0) + (r.special?0.05:0);
+    var bankRate = ouv('ouBankRate'), cdcRate = ouv('ouCdcRate');
+    var s = { key:'504', label:'SBA 504', injPct:inj };
+    s.idc = idc(r.baseCost*(1-inj), bankRate); // interim lender carries 90% during the build
+    s.projectCost = r.baseCost + s.idc;
+    s.equity = s.projectCost*inj;
+    s.bank = s.projectCost*0.50;
+    s.cdcNet = s.projectCost - s.bank - s.equity;
+    s.fees = s.cdcNet*((ouv('ouCdcFeePct')||0)/100);
+    s.cdc = s.cdcNet + s.fees;
+    s.totalDebt = s.bank + s.cdc;
+    var ds1 = annualDebtService(s.bank, bankRate, ouv('ouBankAmort'));
+    var ds2 = annualDebtService(s.cdc, cdcRate, ouv('ouCdcTerm'));
+    s.ds = (ds1!=null && ds2!=null) ? ds1+ds2 : null;
+    s.capFail = s.cdc>5000000;
+    s.rateMissing = bankRate==null || cdcRate==null;
+
+    // ---- 7(a)
+    var eq7 = (ouv('ou7aEquityPct')!=null ? ouv('ou7aEquityPct') : 10)/100;
+    var rate7 = ouv('ou7aRate');
+    var t = { key:'7a', label:'SBA 7(a)', injPct:eq7 };
+    t.idc = idc(r.baseCost*(1-eq7), rate7);
+    t.projectCost = r.baseCost + t.idc;
+    t.equity = t.projectCost*eq7;
+    var base7 = t.projectCost - t.equity;
+    var guar = (ouv('ou7aGuarPct')!=null ? ouv('ou7aGuarPct') : 75)/100;
+    var ovr = ouv('ou7aFeeOverride');
+    t.feeAuto = ovr==null;
+    t.fees = ovr!=null ? base7*guar*(ovr/100) : (base7 ? sba7aUpfrontFee(base7, guar) : 0);
+    t.loan = base7 + t.fees;
+    t.totalDebt = t.loan;
+    t.ds = annualDebtService(t.loan, rate7, ouv('ou7aAmort'));
+    t.capFail = t.loan>5000000;
+    t.rateMissing = rate7==null;
+
+    // ---- cash flow
+    var ni=ouv('ouNetIncome'), da=ouv('ouDa')||0, ie=ouv('ouIntExp')||0;
+    r.rentSaved=ouv('ouRentSaved')||0; r.ownCosts=ouv('ouOwnCosts')||0; r.rental=ouv('ouRentalIncome')||0;
+    r.otherBizDs=ouv('ouOtherBizDs')||0;
+    r.ni = ni;
+    r.ebitda = ni!=null ? ni+da+ie : null;
+    r.bizCash = r.ebitda!=null ? r.ebitda + r.rentSaved - r.ownCosts + r.rental : null;
+    r.ownerComp=ouv('ouOwnerComp')||0; r.otherInc=ouv('ouOtherIncome')||0; r.personalDs=ouv('ouPersonalDs')||0; r.living=ouv('ouLiving')||0;
+    r.globalCash = r.bizCash!=null ? r.bizCash + r.ownerComp + r.otherInc - r.living : null;
+    r.cashAvail = ouv('ouCashAvail');
+    r.asIs = ouv('ouAsIs'); r.asCompleted = ouv('ouAsCompleted');
+    var val = r.asCompleted || r.asIs;
+    r.dscrMin = ouv('ouDscrMin')!=null ? ouv('ouDscrMin') : 1.25;
+    r.globalMin = ouv('ouGlobalMin')!=null ? ouv('ouGlobalMin') : 1.15;
+    r.ltvMax = (ouv('ouLtvMax')!=null ? ouv('ouLtvMax') : 90)/100;
+    [s,t].forEach(function(p){
+      p.bizDscr = (r.bizCash!=null && p.ds) ? r.bizCash/(p.ds + r.otherBizDs) : null;
+      p.globalDscr = (r.globalCash!=null && p.ds) ? r.globalCash/(p.ds + r.otherBizDs + r.personalDs) : null;
+      p.ltv = (val && p.totalDebt) ? p.totalDebt/val : null;
+      p.cashGap = r.cashAvail!=null ? r.cashAvail - p.equity : null;
+      p.bizPass = p.bizDscr!=null ? p.bizDscr>=r.dscrMin : null;
+      p.globalPass = p.globalDscr!=null ? p.globalDscr>=r.globalMin : null;
+      p.ltvPass = p.ltv!=null ? p.ltv<=r.ltvMax : null;
+      p.cashPass = p.cashGap!=null ? p.cashGap>=0 : null;
+    });
+    r.s504 = s; r.s7a = t;
+    r.sel = r.program==='7a' ? t : s;
+    r.alt = r.program==='7a' ? s : t;
+
+    // ---- occupancy
+    r.interest = ($('ouInterest') && $('ouInterest').value) || 'whole';
+    var rsf=ouv('ouRsf'), occ=ouv('ouOccSf');
+    r.rsf=rsf; r.occSf=occ;
+    r.occPct = (rsf && occ!=null) ? occ/rsf : null;
+    r.occPass = r.occPct!=null ? r.occPct>=0.51 : null;
+
+    r.flags = ouFlags(r);
+    return r;
+  }
+
+  function ouFlags(r){
+    var f = [], sel = r.sel;
+    function add(cls,txt){ f.push({cls:cls, txt:txt}); }
+    if(r.occPass===false) add('bad','Occupancy is '+fmtPct(r.occPct)+' of the rentable SF being purchased. SBA requires at least 51% for an existing building. Neither 504 nor 7(a) works as structured. Either buy less space (a condo unit sized to the practice) or the practice has to take more of the building.');
+    else if(r.occPct!=null && r.occPct<0.60) add('warn','Occupancy clears 51% but only at '+fmtPct(r.occPct)+'. Any shrinkage in the practice footprint or a remeasure of the SF breaks eligibility. Get the SF from the rent roll or BOMA measurement, not the listing.');
+    if(r.interest==='condo') add('','Commercial condo: confirm the lender and CDC take condo collateral, and get the CC&amp;Rs and HOA budget early. Medical condo appraisal comps can be thin, which shows up as a lower as-completed value.');
+    if(r.rental>0 && r.occPct!=null && r.occPct>=0.999) add('warn','Leased income is entered but the practice occupies 100% of the space being purchased. Rental income can only come from space the practice does not occupy.');
+    if(r.startup) add('warn','Startup flag on: 504 injection steps up 5%. If the doctor has a long operating history under a prior entity, document the continuity. Lenders and CDCs treat an entity change differently from a true new practice.');
+    if(r.special) add('warn','Special purpose flag on: 504 injection steps up 5%, and the appraisal will lean on cost approach. Expect a tighter as-completed value.');
+    if(r.ni!=null && !r.rentSaved) add('warn','No eliminated rent entered. If the practice leases today, that rent is usually the largest add-back and leaving it out understates DSCR.');
+    if(r.ni!=null && !r.ownCosts) add('warn','No ownership costs entered. Property tax resets to roughly 1.1% of the purchase price in California, plus insurance, maintenance and HOA. Leaving this out overstates cash flow.');
+    if(r.improve && !(ouv('ouBuildMonths'))) add('warn','Improvement budget entered with no construction period. Interest during construction is not being captured.');
+    if(r.hard && !r.cont) add('warn','No contingency on the build-out. Lenders will add one; better to show it now than have the project cost move after commitment.');
+    if(r.equip) add('','Equipment in the project: 504 generally finances long-lived equipment only. Short-lived medical gear usually fits better as a separate equipment finance line or inside 7(a).');
+    if(r.s504.capFail) add('bad','504 debenture of '+fmtMoney(r.s504.cdc)+' exceeds the $5M cap. The bank first lien has to carry more, or equity goes up.');
+    if(r.s7a.capFail) add('bad','7(a) loan of '+fmtMoney(r.s7a.loan)+' exceeds the $5M program cap. This deal needs 504, or 7(a) with a pari passu or companion loan.');
+    if(sel.ltvPass===false) add('warn',sel.label+' total debt is '+fmtPct(sel.ltv)+' of value against a '+fmtPct(r.ltvMax)+' max. SBA lenders do not decline on collateral alone when cash flow supports it, but expect a request for additional collateral, often a lien on the doctor\'s residence.');
+    if(sel.cashPass===false) add('bad','Equity injection shortfall of '+fmtMoney(-sel.cashGap)+' under '+sel.label+'. Required '+fmtMoney(sel.equity)+' against '+fmtMoney(r.cashAvail)+' available.');
+    if(sel.bizPass===false) add('bad','Business DSCR of '+sel.bizDscr.toFixed(2)+'x is below the '+r.dscrMin.toFixed(2)+'x minimum under '+sel.label+'.');
+    if(sel.globalPass===false) add('bad','Global DSCR of '+sel.globalDscr.toFixed(2)+'x is below the '+r.globalMin.toFixed(2)+'x minimum under '+sel.label+'.');
+    // honest program comparison
+    var a=r.s504, b=r.s7a;
+    if(a.ds && b.ds && a.equity && b.equity){
+      var dsDiff = b.ds - a.ds, eqDiff = a.equity - b.equity;
+      var msg = '504 annual debt service is '+fmtMoney(Math.abs(dsDiff))+(dsDiff>=0?' lower':' higher')+' than 7(a)';
+      if(Math.abs(eqDiff)>1) msg += ', and it needs '+fmtMoney(Math.abs(eqDiff))+(eqDiff>0?' more':' less')+' equity';
+      msg += '. 504 also fixes the CDC portion for the full term, while 7(a) is usually variable. 7(a) wins on speed and on simplicity if working capital or equipment needs to ride in the same loan.';
+      add('good', msg);
+    }
+    return f;
+  }
+
+  function ouCell(v, cls){ return '<td class="'+(cls||'')+'">'+v+'</td>'; }
+  function ouPassCls(p){ return p===true?'pass':(p===false?'fail':''); }
+
+  function renderOUResults(r){
+    var el = $('ouResults'); if(!el) return;
+    var cols = [r.s504, r.s7a];
+    function sel(p){ return p.key===r.sel.key ? ' sel' : ''; }
+    function row(label, fn){ return '<tr><th>'+label+'</th>'+cols.map(function(p){ var o=fn(p); return '<td class="'+(o.cls||'')+sel(p)+'">'+o.v+'</td>'; }).join('')+'</tr>'; }
+    var x = function(v){ return v!=null ? v.toFixed(2)+'x' : '—'; };
+    var html = '<table class="ou-table"><thead><tr><th></th>'+cols.map(function(p){ return '<th class="'+sel(p)+'">'+p.label+(p.key===r.sel.key?' (selected)':'')+'</th>'; }).join('')+'</tr></thead><tbody>'+
+      row('Base project cost', function(){ return {v:fmtMoney(r.baseCost)}; })+
+      row('Interest during construction', function(p){ return {v:fmtMoney(p.idc)}; })+
+      row('Total project cost', function(p){ return {v:'<b>'+fmtMoney(p.projectCost)+'</b>'}; })+
+      row('Equity injection', function(p){ return {v:fmtMoney(p.equity)+' ('+fmtPct(p.injPct)+')', cls:ouPassCls(p.cashPass)}; })+
+      row('Bank first lien', function(p){ return {v: p.key==='504'?fmtMoney(p.bank):'n/a'}; })+
+      row('CDC debenture / 7(a) loan (before fees)', function(p){ return {v: p.key==='504'?fmtMoney(p.cdcNet):fmtMoney(p.loan-p.fees)}; })+
+      row('Fees financed', function(p){ return {v:fmtMoney(p.fees)+(p.key==='7a'&&p.feeAuto?' <small>(FY2027 tiers)</small>':'')}; })+
+      row('Total SBA financing', function(p){ return {v:'<b>'+fmtMoney(p.totalDebt)+'</b>', cls:p.capFail?'fail':''}; })+
+      row('Annual debt service', function(p){ return {v: p.ds!=null?fmtMoney(p.ds):(p.rateMissing?'enter rate':'—')}; })+
+      row('Business DSCR', function(p){ return {v:x(p.bizDscr), cls:ouPassCls(p.bizPass)}; })+
+      row('Global DSCR', function(p){ return {v:x(p.globalDscr), cls:ouPassCls(p.globalPass)}; })+
+      row('LTV (as-completed)', function(p){ return {v:fmtPct(p.ltv), cls:ouPassCls(p.ltvPass)}; })+
+      row('Cash left after injection', function(p){ return {v: p.cashGap!=null?fmtMoney(p.cashGap):'—', cls:ouPassCls(p.cashPass)}; })+
+      '</tbody></table>'+
+      '<div class="ou-computed" style="margin-top:8px;">Business cash flow available: <b>'+fmtMoney(r.bizCash)+'</b> (EBITDA '+fmtMoney(r.ebitda)+' + eliminated rent '+fmtMoney(r.rentSaved)+' − ownership costs '+fmtMoney(r.ownCosts)+' + leased income '+fmtMoney(r.rental)+'). Occupancy: <b>'+(r.occPct!=null?fmtPct(r.occPct):'—')+'</b>.</div>'+
+      (r.flags.length ? '<ul class="ou-flags">'+r.flags.map(function(fl){ return '<li class="'+fl.cls+'">'+fl.txt+'</li>'; }).join('')+'</ul>' : '');
+    el.innerHTML = html;
+    var idcEl = $('ouIdcNote');
+    if(idcEl) idcEl.textContent = r.sel.idc ? 'Estimated interest during construction ('+r.sel.label+'): '+fmtMoney(r.sel.idc) : '';
+  }
+
+  function ouGaps(r){
+    var g = [];
+    if(!r.purchase) g.push('Purchase price missing');
+    if(!r.asCompleted) g.push('As-completed value missing');
+    if(!r.rsf || r.occSf==null) g.push('Occupancy SF missing');
+    if(r.ni==null) g.push('Practice net income missing');
+    if(r.sel.rateMissing) g.push(r.sel.label+' rate missing');
+    if(r.cashAvail==null) g.push('Cash available for injection missing');
+    if(!$('sponsorYears').value) g.push('Years in business not entered');
+    if(!$('guarantorNetWorth').value) g.push('Guarantor net worth not entered');
+    return g;
+  }
+
+  function ouCollect(){
+    var d = {};
+    OU_NUM_FIELDS.forEach(function(id){ var el=$(id); if(el) d[id] = num(el.value); });
+    OU_SELECT_FIELDS.forEach(function(id){ var el=$(id); if(el) d[id] = el.value; });
+    OU_CHECK_FIELDS.forEach(function(id){ var el=$(id); if(el) d[id] = el.checked; });
+    return d;
+  }
+  function ouRestore(d){
+    if(!d) return;
+    Object.keys(d).forEach(function(k){
+      if(OU_NUM_FIELDS.indexOf(k)<0 && OU_SELECT_FIELDS.indexOf(k)<0 && OU_CHECK_FIELDS.indexOf(k)<0) return;
+      var el=$(k); if(!el) return;
+      if(el.type==='checkbox') el.checked = !!d[k];
+      else el.value = d[k]!=null ? d[k] : '';
+    });
+  }
+
+  function ouTermsHtml(ev){
+    var r=ev.ou, sp=r.sel, elig = ev.sbaEligible==null?'Unconfirmed':(ev.sbaEligible?'Likely':'No');
+    var terms = sp.key==='504'
+      ? pl('Bank Rate / Amort', (ouv('ouBankRate')!=null?ouv('ouBankRate')+'%':'—')+' / '+(ouv('ouBankAmort')||'—')+' yrs') + pl('CDC Rate / Term', (ouv('ouCdcRate')!=null?ouv('ouCdcRate')+'%':'—')+' / '+(ouv('ouCdcTerm')||'—')+' yrs')
+      : pl('7(a) Rate / Amort', (ouv('ou7aRate')!=null?ouv('ou7aRate')+'%':'—')+' / '+(ouv('ou7aAmort')||'—')+' yrs') + pl('Guaranteed Portion', (ouv('ou7aGuarPct')!=null?ouv('ou7aGuarPct'):75)+'%');
+    return '<div class="pl-section"><h2>Requested Terms</h2><div class="pl-grid">'+
+      pl('Program', sp.label) + pl('Total SBA Financing', fmtMoney(sp.totalDebt)) + pl('SBA Eligible', elig) +
+      terms + pl('Annual Debt Service', fmtMoney(sp.ds)) +
+      '</div></div>';
+  }
+  function ouReportHtml(r){
+    var s=r.sel;
+    var structure = s.key==='504'
+      ? pl('Bank First Lien (50%)', fmtMoney(s.bank)) + pl('CDC Debenture incl. Fees', fmtMoney(s.cdc)) + pl('Borrower Injection ('+fmtPct(s.injPct)+')', fmtMoney(s.equity))
+      : pl('7(a) Loan incl. Guaranty Fee', fmtMoney(s.loan)) + pl('Guaranty Fee Financed', fmtMoney(s.fees)) + pl('Borrower Injection ('+fmtPct(s.injPct)+')', fmtMoney(s.equity));
+    return '<div class="pl-section"><h2>Owner-User Project: Sources &amp; Uses</h2><div class="pl-grid">'+
+        pl('Purchase Price', fmtMoney(r.purchase)) + pl('Improvements (hard)', fmtMoney(r.hard)) + pl('Soft Costs', fmtMoney(r.soft)) +
+        pl('Contingency', fmtMoney(r.cont)) + pl('FF&E / Equipment', fmtMoney(r.equip)) + pl('Closing Costs', fmtMoney(r.closing)) +
+        pl('Interest During Construction', fmtMoney(s.idc)) + pl('Total Project Cost', fmtMoney(s.projectCost)) + pl('Program', s.label) +
+        structure +
+      '</div></div>'+
+      '<div class="pl-section"><h2>Occupancy &amp; Collateral</h2><div class="pl-grid">'+
+        pl('Interest Purchased', r.interest==='condo'?'Commercial condo unit':'Whole building') + pl('Practice SF / Rentable SF', (r.occSf!=null?Math.round(r.occSf).toLocaleString():'—')+' / '+(r.rsf?Math.round(r.rsf).toLocaleString():'—')) + pl('Owner Occupancy', r.occPct!=null?fmtPct(r.occPct):'—') +
+        pl('As-Is Value', fmtMoney(r.asIs)) + pl('As-Completed Value', fmtMoney(r.asCompleted)) + pl('LTV (as-completed)', fmtPct(s.ltv)) +
+      '</div></div>'+
+      '<div class="pl-section"><h2>Practice &amp; Global Cash Flow</h2><div class="pl-grid">'+
+        pl('Practice EBITDA', fmtMoney(r.ebitda)) + pl('Eliminated Rent', fmtMoney(r.rentSaved)) + pl('New Ownership Costs', fmtMoney(r.ownCosts)) +
+        pl('Leased Space Income', fmtMoney(r.rental)) + pl('Cash Flow Available', fmtMoney(r.bizCash)) + pl('Annual Debt Service (new)', fmtMoney(s.ds)) +
+        pl('Other Business Debt Service', fmtMoney(r.otherBizDs)) + pl('Business DSCR', s.bizDscr!=null?s.bizDscr.toFixed(2)+'x':'—') + pl('Global DSCR', s.globalDscr!=null?s.globalDscr.toFixed(2)+'x':'—') +
+      '</div></div>';
+  }
+
   function field(id,label,type){
     type = type||'money';
     return '<div class="field"><label>'+label+'</label><input type="text" inputmode="'+(type==='text'?'text':'decimal')+'" id="'+id+'"></div>';
@@ -392,17 +721,34 @@
 
   function renderBranch(){
     $('branchSections').innerHTML = branchTemplate(state.dealType);
-    document.querySelectorAll('#branchSections input, #branchSections textarea').forEach(function(el){ el.addEventListener('input', renderEval); });
+    document.querySelectorAll('#branchSections input, #branchSections textarea, #branchSections select').forEach(function(el){ el.addEventListener('input', renderEval); el.addEventListener('change', renderEval); });
   }
 
   function setDealType(t){
     state.dealType = t;
     document.querySelectorAll('.typepicker .opt').forEach(function(o){ o.classList.toggle('active', o.dataset.type===t); });
+    // Owner-user sizes the loan from the project and carries its own SBA terms and thresholds.
+    var isOU = t==='owner_user';
+    $('thresholdsPanel').style.display = isOU ? 'none' : '';
+    ['requestedAmount','requestedTerm','proposedRate','amortYears'].forEach(function(id){ var f=$(id).closest('.field'); if(f) f.style.display = isOU ? 'none' : ''; });
     renderBranch();
     renderEval();
   }
 
   function computeEval(){
+    if(state.dealType==='owner_user'){
+      var r = computeOU();
+      var o = { ou:r, gaps:ouGaps(r), ready:false };
+      // Requested amount is derived for owner-user so saves, the deal list and Pipeline carry the real number.
+      if(r.sel.totalDebt) $('requestedAmount').value = Math.round(r.sel.totalDebt);
+      var revenue = num($('borrowerRevenue').value), sizeStd = num($('sbaSizeStandard').value);
+      if(r.occPass===false || r.sel.capFail){ o.sbaEligible=false; }
+      else if(sizeStd && revenue!=null && revenue>sizeStd){ o.sbaEligible=false; }
+      else if(r.occPass===true && sizeStd && revenue!=null){ o.sbaEligible=true; }
+      else { o.sbaEligible=null; }
+      o.ready = o.gaps.length===0;
+      return o;
+    }
     var reqAmt = num($('requestedAmount').value);
     var rate = num($('proposedRate').value);
     var amortYearsVal = num($('amortYears').value);
@@ -506,6 +852,20 @@
   function renderEval(){
     var ev = computeEval();
     var cells = [];
+    if(state.dealType==='owner_user'){
+      var r = ev.ou, sp = r.sel;
+      renderOUResults(r);
+      cells.push(cell(sp.bizDscr!=null?sp.bizDscr.toFixed(2)+'x':'—', 'Business DSCR ('+sp.label+')', sp.bizPass));
+      cells.push(cell(sp.globalDscr!=null?sp.globalDscr.toFixed(2)+'x':'—', 'Global DSCR', sp.globalPass));
+      cells.push(cell(fmtPct(sp.ltv), 'LTV as-completed', sp.ltvPass));
+      cells.push(cell(r.occPct!=null?fmtPct(r.occPct):'—', 'Owner occupancy (51% min)', r.occPass));
+      cells.push(cell(fmtMoney(sp.equity), 'Equity injection', sp.cashPass));
+      var bad = r.flags.filter(function(f){ return f.cls==='bad'; }).length;
+      cells.push('<div class="cell"><span class="status-pill '+(ev.ready&&!bad?'ready':'gaps')+'">'+(ev.ready?(bad?bad+' blocker(s)':'Ready to shop'):ev.gaps.length+' gap(s)')+'</span>'+
+        '<div class="binding-tag">'+(ev.gaps.length?ev.gaps.slice(0,2).join('; ')+(ev.gaps.length>2?'…':''):'Total SBA financing '+fmtMoney(sp.totalDebt))+'</div></div>');
+      $('evalBar').innerHTML = cells.join('');
+      return;
+    }
     if(state.dealType==='ground_up'){
       cells.push(cell(fmtPct(ev.ltc), 'LTC', ev.ltvPass));
       cells.push(cell(fmtMoney(ev.totalProjectCost), 'Total project cost', null));
@@ -566,6 +926,8 @@
         acq_in_place_noi:num($('acqInPlaceNoi').value), acq_pro_forma_noi:num($('acqProFormaNoi').value),
         acq_pip_budget:num($('acqPipBudget').value)
       });
+    } else if(state.dealType==='owner_user'){
+      row.ou_data = ouCollect();
     } else if(state.dealType==='refi'){
       Object.assign(row, {
         refi_existing_balance:num($('refiExistingBalance').value), refi_existing_rate:num($('refiExistingRate').value),
@@ -624,6 +986,8 @@
     } else if(state.dealType==='acquisition'){
       setVal('acqPurchasePrice',row.acq_purchase_price); setVal('acqAppraisedValue',row.acq_appraised_value);
       setVal('acqInPlaceNoi',row.acq_in_place_noi); setVal('acqProFormaNoi',row.acq_pro_forma_noi); setVal('acqPipBudget',row.acq_pip_budget);
+    } else if(state.dealType==='owner_user'){
+      ouRestore(row.ou_data);
     } else if(state.dealType==='refi'){
       setVal('refiCurrentValue',row.refi_current_value);
       setVal('refiExistingBalance',row.refi_existing_balance); setVal('refiExistingRate',row.refi_existing_rate);
@@ -679,7 +1043,7 @@
       var pipelineId = 'deal:'+Date.now()+Math.random().toString(36).slice(2,8);
       var companyName = $('companyName').value || 'Untitled';
       var pipelineRow = {
-        id: pipelineId, company_name: companyName, industry: '', instrument_type: 'CRE Loan',
+        id: pipelineId, company_name: companyName, industry: '', instrument_type: state.dealType==='owner_user' ? ((($('ouProgram')||{}).value==='7a') ? 'SBA 7(a)' : 'SBA 504') : 'CRE Loan',
         stage: 'Qualifying', estimated_amount: num($('requestedAmount').value),
         contact_name: $('contactName').value, phone: $('phone').value, email: $('email').value,
         assigned_to: $('assignedTo').value,
@@ -750,6 +1114,7 @@
   var FULL_LOGO_SVG = '<svg viewBox="145 275 735 220" xmlns="http://www.w3.org/2000/svg" height="30">' + '<polygon id="polygon2" fill="#1a4b8c" points="242.74669 285.5804 256.15816 374.10946 327.42649 334.47028" /> <polygon id="polygon4" fill="#4a7fc4" points="329.32111 430.70878 329.32111 335.56417 258.07371 383.13647" /> <polygon id="polygon6" fill="#002347" points="154.63524 335.56417 154.63524 430.70878 225.88271 383.13647" /> <polygon id="polygon8" fill="#0047ab" points="227.7982 374.10946 241.20966 285.5804 156.52986 334.47028" /> <polygon id="polygon10" fill="#0047ab" points="227.7982 392.16349 155.13954 432.57591 241.4713 482.4196" /> <polygon id="polygon12" fill="#1a4b8c" points="256.15816 392.16349 242.48506 482.4196 328.81682 432.57591" /> <g style="fill:#002347" id="g24"> <path id="path14" d="m 441.8149,347.11795 -8.78946,10.01303 c -4.78384,-5.34015 -11.68195,-9.34577 -20.36045,-9.34577 -16.4658,0 -27.48048,12.34973 -27.48048,29.59476 0,17.02261 11.01469,29.48329 27.48048,29.48329 9.01238,0 16.02146,-4.11658 20.8053,-9.79061 l 8.6785,10.23596 c -7.78831,8.56704 -17.69038,12.34973 -29.4838,12.34973 -24.2541,0 -41.6106,-18.13522 -41.6106,-42.27837 0,-24.36557 17.35649,-42.38933 41.6106,-42.38933 12.46119,0 21.47307,4.22753 29.14991,12.1273 z" /> <path id="path16" d="m 542.05568,377.37998 c 0,24.47703 -17.80134,42.27837 -41.6111,42.27837 -23.92022,0 -41.6106,-17.80134 -41.6106,-42.27837 0,-24.36557 17.69038,-42.38933 41.6106,-42.38933 23.80976,0 41.6111,18.02376 41.6111,42.38933 z m -69.09159,0 c 0,17.24503 11.34807,29.48329 27.48048,29.48329 16.02146,0 27.48099,-12.23826 27.48099,-29.48329 0,-17.24503 -11.45953,-29.59476 -27.48099,-29.59476 -16.13242,0 -27.48048,12.34973 -27.48048,29.59476 z" /> <path id="path18" d="m 623.38149,358.2436 c 0,8.56704 -4.56142,14.01865 -8.90042,16.4663 8.78946,2.67007 15.57611,8.45557 15.57611,20.13753 0,14.90884 -11.571,23.36441 -26.92468,23.36441 h -35.60268 v -81.77469 h 30.15106 c 16.4663,0 25.7006,8.34411 25.7006,21.80645 z m -42.05544,-9.12334 v 21.58403 h 15.35369 c 7.89926,0 12.68361,-4.44996 12.68361,-10.79176 0,-6.78665 -4.67288,-10.79227 -13.46234,-10.79227 z m 0,33.26648 v 23.14149 h 20.13753 c 8.90092,0 14.57496,-4.00511 14.57496,-11.57049 0,-7.45442 -5.34015,-11.571 -15.46464,-11.571 h -19.24784 z" /> <path id="path20" d="m 761.5581,405.86212 h 37.04867 v 12.34973 h -50.95636 v -81.77469 h 13.90769 v 69.42497 z" /> <path id="path22" d="m 869.36476,348.78688 h -27.70291 v 69.42497 h -13.90769 v -69.42497 h -27.70291 v -12.34973 h 69.3135 v 12.34973 z" /> </g> <polygon id="polygon26" fill="#002347" points="686.35066 334.99065 685.90582 334.99065 647.41014 418.21184 662.54141 418.21184 686.12824 363.58375 709.71508 418.21184 724.84584 418.21184" /> <polygon id="polygon28" fill="#0047ab" points="675.65591 418.21184 686.12824 393.95749 696.60057 418.21184" /> <g style="fill:#1a4b8c" id="g62"> <path id="path30" d="m 382.62256,442.73596 c 0.86963,-0.86963 1.89795,-1.54346 3.0874,-2.02197 1.18799,-0.47803 2.49268,-0.71729 3.91309,-0.71729 1.50684,0 2.90576,0.3042 4.19629,0.91309 1.28955,0.60889 2.44189,1.50781 3.45654,2.6958 l 4.56592,-4.17432 c -1.4502,-1.76758 -3.24707,-3.10889 -5.39209,-4.02197 -2.14551,-0.91309 -4.53711,-1.36963 -7.17432,-1.36963 -2.34814,0 -4.52979,0.38477 -6.54443,1.15234 -2.01514,0.76855 -3.76855,1.86279 -5.26123,3.28271 -1.49316,1.4209 -2.65234,3.0874 -3.47852,5.00049 -0.82617,1.91357 -1.23926,4.01562 -1.23926,6.30518 0,2.29004 0.41309,4.3916 1.23926,6.30469 0.82617,1.91357 1.97852,3.58057 3.45703,5.00049 1.47803,1.4209 3.22412,2.51514 5.23926,3.2832 2.01465,0.76758 4.19629,1.15234 6.54443,1.15234 2.6665,0 5.07227,-0.46436 7.21777,-1.3916 2.14502,-0.92725 3.94189,-2.27539 5.39209,-4.04395 l -4.56592,-4.17432 c -1.01465,1.18896 -2.16699,2.09473 -3.45654,2.71777 -1.29053,0.62354 -2.68945,0.93506 -4.19629,0.93506 -1.42041,0 -2.7251,-0.23926 -3.91309,-0.71777 -1.18945,-0.47803 -2.21777,-1.15234 -3.0874,-2.02197 -0.86963,-0.86963 -1.54395,-1.89795 -2.02197,-3.08691 -0.47852,-1.18848 -0.71729,-2.50732 -0.71729,-3.95703 0,-1.44922 0.23877,-2.76807 0.71729,-3.95703 0.47803,-1.18848 1.15234,-2.21777 2.02197,-3.0874 z" /> <path id="path32" d="m 431.45312,438.47473 c -1.50732,-1.41992 -3.26855,-2.51416 -5.2832,-3.28271 -2.01514,-0.76758 -4.2251,-1.15234 -6.63086,-1.15234 -2.40674,0 -4.6167,0.39111 -6.63086,1.17383 -2.01562,0.78271 -3.77637,1.88477 -5.2832,3.30469 -1.50781,1.4209 -2.67432,3.08057 -3.50049,4.979 -0.82617,1.89893 -1.23926,3.99365 -1.23926,6.2832 0,2.26123 0.41309,4.34814 1.23926,6.26123 0.82617,1.91357 1.99268,3.58057 3.50049,5.00049 1.50684,1.4209 3.27539,2.52197 5.30469,3.30469 2.02881,0.78271 4.24658,1.17432 6.65283,1.17432 2.37646,0 4.57227,-0.38477 6.5874,-1.15234 2.01465,-0.76807 3.77588,-1.8623 5.2832,-3.2832 1.50684,-1.41992 2.67432,-3.09375 3.50049,-5.02197 0.82617,-1.92773 1.23926,-4.02197 1.23926,-6.2832 0,-2.28955 -0.41309,-4.3916 -1.23926,-6.30518 -0.82617,-1.91309 -1.99365,-3.57959 -3.50049,-5.00049 z m -3.10888,15.24072 c -0.47852,1.17383 -1.15234,2.20312 -2.02197,3.0874 -0.86963,0.88428 -1.87744,1.56543 -3.02197,2.04346 -1.14551,0.47852 -2.39893,0.71777 -3.76123,0.71777 -1.36279,0 -2.62402,-0.23926 -3.7832,-0.71777 -1.15967,-0.47803 -2.16699,-1.15918 -3.02197,-2.04346 -0.85547,-0.88428 -1.52197,-1.91357 -2,-3.0874 -0.47852,-1.17383 -0.71729,-2.48535 -0.71729,-3.93506 0,-1.44922 0.23877,-2.76123 0.71729,-3.93506 0.47803,-1.17432 1.14453,-2.20264 2,-3.0874 0.85498,-0.88379 1.8623,-1.56543 3.02197,-2.04395 1.15918,-0.47803 2.42041,-0.71729 3.7832,-0.71729 1.3623,0 2.61572,0.23926 3.76123,0.71729 1.14453,0.47852 2.15234,1.16016 3.02197,2.04395 0.86963,0.88477 1.54346,1.91309 2.02197,3.0874 0.47852,1.17383 0.71729,2.48584 0.71729,3.93506 0,1.44971 -0.23877,2.76123 -0.71729,3.93506 z" /> <path id="polygon34" d="m 441.49756,434.56165 v 30.4375 h 6.56592 v -17.95252 l 8.95752,14.69129 h 3.13086 l 8.96624,-14.89313 0.0777,18.15436 h 6.56592 v -30.4375 h -5.87012 l -11.16882,18.89502 -11.39856,-18.89502 z" style="" /> <path id="polygon36" d="m 483.02295,434.56165 v 30.4375 h 6.56592 v -17.95252 l 8.95752,14.69129 h 3.13086 l 8.96624,-14.89313 0.0777,18.15436 h 6.56592 v -30.4375 h -5.87012 l -11.16882,18.89502 -11.39856,-18.89502 z" style="" /> <path id="polygon38" d="M 545.68164,446.77991 H 531.5498 v -6.56592 h 16.00147 v -5.65234 h -23.00244 v 30.4375 h 23.56738 v -5.65284 H 531.5498 v -7.04394 h 14.13184 z" style="" /> <path id="path40" d="m 573.94482,455.19397 c 1.97119,-0.85498 3.49316,-2.10156 4.56592,-3.73975 1.07227,-1.63721 1.60889,-3.60156 1.60889,-5.8916 0,-3.42041 -1.17432,-6.10938 -3.52197,-8.06592 -2.34814,-1.95703 -5.63867,-2.93506 -9.87061,-2.93506 h -13.00146 v 30.4375 h 7.08789 v -8.52246 h 6.0874 c 0.10492,0 0.20007,-0.0111 0.30389,-0.0123 l 5.91388,8.53479 h 7.56641 l -6.78369,-9.78943 c 0.0138,-0.006 0.0297,-0.01 0.0435,-0.0157 z m -2.56543,-13.52295 c 1.10156,0.91309 1.65234,2.21045 1.65234,3.8916 0,1.68164 -0.55078,2.98584 -1.65234,3.91309 -1.10205,0.92822 -2.7251,1.3916 -4.86963,1.3916 h -5.69629 V 440.3009 h 5.69629 c 2.14453,0 3.76758,0.45703 4.86963,1.37012 z" /> <path id="path42" d="m 593.64258,442.73596 c 0.86963,-0.86963 1.89795,-1.54346 3.0874,-2.02197 1.18799,-0.47803 2.49268,-0.71729 3.91309,-0.71729 1.50684,0 2.90576,0.3042 4.19629,0.91309 1.28955,0.60889 2.44189,1.50781 3.45654,2.6958 l 4.56592,-4.17432 c -1.4502,-1.76758 -3.24707,-3.10889 -5.39209,-4.02197 -2.14551,-0.91309 -4.53711,-1.36963 -7.17432,-1.36963 -2.34814,0 -4.52979,0.38477 -6.54443,1.15234 -2.01514,0.76855 -3.76855,1.86279 -5.26123,3.28271 -1.49316,1.4209 -2.65234,3.0874 -3.47852,5.00049 -0.82617,1.91357 -1.23926,4.01562 -1.23926,6.30518 0,2.29004 0.41309,4.3916 1.23926,6.30469 0.82617,1.91357 1.97852,3.58057 3.45703,5.00049 1.47803,1.4209 3.22412,2.51514 5.23926,3.2832 2.01465,0.76758 4.19629,1.15234 6.54443,1.15234 2.6665,0 5.07227,-0.46436 7.21777,-1.3916 2.14502,-0.92725 3.94189,-2.27539 5.39209,-4.04395 l -4.56592,-4.17432 c -1.01465,1.18896 -2.16699,2.09473 -3.45654,2.71777 -1.29053,0.62354 -2.68945,0.93506 -4.19629,0.93506 -1.42041,0 -2.7251,-0.23926 -3.91309,-0.71777 -1.18945,-0.47803 -2.21777,-1.15234 -3.0874,-2.02197 -0.86963,-0.86963 -1.54395,-1.89795 -2.02197,-3.08691 -0.47852,-1.18848 -0.71729,-2.50732 -0.71729,-3.95703 0,-1.44922 0.23877,-2.76807 0.71729,-3.95703 0.47803,-1.18848 1.15234,-2.21777 2.02197,-3.0874 z" /> <path id="rect44" d="m 617.1665,434.56165 h 7.08789 v 30.4375 h -7.08789 z" style="" /> <path id="path46" d="m 640.95166,434.56165 -13.52295,30.4375 h 7.21777 l 2.71252,-6.52246 h 14.09851 l 2.7124,6.52246 h 7.39209 l -13.65332,-30.4375 h -6.95703 z m -1.36853,18.56689 4.82526,-11.60291 4.82513,11.60291 z" /> <path id="polygon48" d="m 664.73633,464.99915 h 22.26318 v -5.73975 h -15.17529 v -24.69775 h -7.08789 z" style="" /> <path id="path50" d="m 711.2627,442.73596 c 0.86963,-0.86963 1.89795,-1.54346 3.0874,-2.02197 1.18799,-0.47803 2.49268,-0.71729 3.91309,-0.71729 1.50684,0 2.90576,0.3042 4.19629,0.91309 1.28955,0.60889 2.44189,1.50781 3.45654,2.6958 l 4.56592,-4.17432 c -1.4502,-1.76758 -3.24707,-3.10889 -5.39209,-4.02197 -2.14551,-0.91309 -4.53711,-1.36963 -7.17432,-1.36963 -2.34814,0 -4.52979,0.38477 -6.54443,1.15234 -2.01514,0.76855 -3.76855,1.86279 -5.26123,3.28271 -1.49316,1.4209 -2.65234,3.0874 -3.47852,5.00049 -0.82617,1.91357 -1.23926,4.01562 -1.23926,6.30518 0,2.29004 0.41309,4.3916 1.23926,6.30469 0.82617,1.91357 1.97852,3.58057 3.45703,5.00049 1.47803,1.4209 3.22412,2.51514 5.23926,3.2832 2.01465,0.76758 4.19629,1.15234 6.54443,1.15234 2.6665,0 5.07227,-0.46436 7.21777,-1.3916 2.14502,-0.92725 3.94189,-2.27539 5.39209,-4.04395 l -4.56592,-4.17432 c -1.01465,1.18896 -2.16699,2.09473 -3.45654,2.71777 -1.29053,0.62354 -2.68945,0.93506 -4.19629,0.93506 -1.42041,0 -2.7251,-0.23926 -3.91309,-0.71777 -1.18945,-0.47803 -2.21777,-1.15234 -3.0874,-2.02197 -0.86963,-0.86963 -1.54395,-1.89795 -2.02197,-3.08691 -0.47852,-1.18848 -0.71729,-2.50732 -0.71729,-3.95703 0,-1.44922 0.23877,-2.76807 0.71729,-3.95703 0.47803,-1.18848 1.15234,-2.21777 2.02197,-3.0874 z" /> <path id="path52" d="m 755.00537,455.19397 c 1.97119,-0.85498 3.49316,-2.10156 4.56592,-3.73975 1.07227,-1.63721 1.60889,-3.60156 1.60889,-5.8916 0,-3.42041 -1.17432,-6.10938 -3.52197,-8.06592 -2.34814,-1.95703 -5.63867,-2.93506 -9.87061,-2.93506 h -13.00146 v 30.4375 h 7.08789 v -8.52246 h 6.0874 c 0.10492,0 0.20007,-0.0111 0.30389,-0.0123 l 5.91388,8.53479 h 7.56641 l -6.78369,-9.78943 c 0.0139,-0.006 0.0297,-0.01 0.0435,-0.0157 z m -2.56543,-13.52295 c 1.10156,0.91309 1.65234,2.21045 1.65234,3.8916 0,1.68164 -0.55078,2.98584 -1.65234,3.91309 -1.10205,0.92822 -2.7251,1.3916 -4.86963,1.3916 h -5.69629 V 440.3009 h 5.69629 c 2.14453,0 3.76758,0.45703 4.86963,1.37012 z" /> <path id="polygon54" d="m 787.87842,446.77991 h -14.13184 v -6.56592 h 16.00147 v -5.65234 h -23.00244 v 30.4375 h 23.56738 v -5.65284 h -16.56641 v -7.04394 h 14.13184 z" style="" /> <path id="path56" d="m 818.48975,436.45276 c -2.52197,-1.26074 -5.43506,-1.89111 -8.73975,-1.89111 h -13.82764 v 30.4375 H 809.75 c 3.30469,0 6.21777,-0.63037 8.73975,-1.8916 2.52197,-1.26074 4.49316,-3.02881 5.91357,-5.30469 1.41992,-2.27539 2.13086,-4.94971 2.13086,-8.02246 0,-3.07227 -0.71094,-5.74658 -2.13086,-8.02246 -1.42041,-2.27539 -3.3916,-4.04395 -5.91357,-5.30518 z m -0.32618,18.34961 c -0.82617,1.43506 -1.98584,2.53711 -3.47852,3.30469 -1.49316,0.76855 -3.25439,1.15234 -5.2832,1.15234 h -6.3916 v -18.9585 h 6.3916 c 2.02881,0 3.79004,0.38477 5.2832,1.15234 1.49268,0.76855 2.65234,1.86328 3.47852,3.2832 0.82617,1.42041 1.23926,3.10205 1.23926,5.04395 0,1.91309 -0.41309,3.5874 -1.23926,5.02197 z" /> <path id="rect58" d="m 831.83887,434.56165 h 7.08789 v 30.4375 h -7.08789 z" style="" /> <path id="polygon60" d="m 852.40625,440.3009 v 24.69825 h 7.04395 V 440.3009 h 9.74023 v -5.73925 h -26.52441 v 5.73925 z" style="" /> </g>' + '</svg>';
 
   function branchDetailHtml(){
+    if(state.dealType==='owner_user') return ouReportHtml(computeEval().ou);
     if(state.dealType==='ground_up'){
       var gates = GU_GATES.map(function(g){ var ok = $(g.key).checked; return (ok?'✓ ':'○ ')+g.label; }).join(' &nbsp;&nbsp; ');
       return '<div class="pl-section"><h2>Ground-Up: Sources &amp; Uses</h2><div class="pl-grid">'+
@@ -775,9 +1140,13 @@
 
   function renderPreLook(){
     var ev = computeEval();
-    var typeLabel = {ground_up:'Ground-Up Construction', acquisition:'Acquisition', refi:'Refinance'}[state.dealType];
+    var typeLabel = {ground_up:'Ground-Up Construction', acquisition:'Acquisition', refi:'Refinance', owner_user:'Owner-User / SBA (Purchase + Improve)'}[state.dealType];
     var metricsHtml = '';
-    if(state.dealType==='ground_up'){
+    if(state.dealType==='owner_user'){
+      var ors = ev.ou.sel;
+      metricsHtml = pl('Program', ors.label) + pl('Business DSCR', ors.bizDscr!=null?ors.bizDscr.toFixed(2)+'x':'—') + pl('Global DSCR', ors.globalDscr!=null?ors.globalDscr.toFixed(2)+'x':'—') +
+        pl('LTV (as-completed)', fmtPct(ors.ltv)) + pl('Owner Occupancy', ev.ou.occPct!=null?fmtPct(ev.ou.occPct):'—') + pl('Total SBA Financing', fmtMoney(ors.totalDebt));
+    } else if(state.dealType==='ground_up'){
       metricsHtml = pl('LTC', fmtPct(ev.ltc)) + pl('Total Project Cost', fmtMoney(ev.totalProjectCost)) + pl('Binding Constraint', ev.binding||'—');
     } else {
       metricsHtml = pl('LTV', fmtPct(ev.ltv)) + pl('DSCR', ev.dscr!=null?ev.dscr.toFixed(2)+'x':'—') + pl('Debt Yield', fmtPct(ev.dy)) + pl('Binding Constraint', ev.binding||'—');
@@ -796,10 +1165,11 @@
       pl('Guarantor Net Worth', fmtMoney(num($('guarantorNetWorth').value))) + pl('Guarantor Liquidity', fmtMoney(num($('guarantorLiquidity').value))) + pl('', '') +
       '</div></div>'+
 
+      (state.dealType==='owner_user' ? ouTermsHtml(ev) :
       '<div class="pl-section"><h2>Requested Terms</h2><div class="pl-grid">'+
       pl('Requested Amount', fmtMoney(num($('requestedAmount').value))) + pl('Term (months)', $('requestedTerm').value||'—') + pl('Proposed Rate', $('proposedRate').value?$('proposedRate').value+'%':'—') +
       pl('Amortization (yrs)', $('amortYears').value||'—') + pl('SBA Eligible', ev.sbaEligible==null?'Unconfirmed':(ev.sbaEligible?'Likely':'No')) + pl('', '') +
-      '</div></div>'+
+      '</div></div>')+
 
       branchDetailHtml()+
 
@@ -871,7 +1241,7 @@
       });
     }
     var dealTypeParam = params.get('dealType');
-    if(dealTypeParam && ['ground_up','acquisition','refi'].indexOf(dealTypeParam)>-1){
+    if(dealTypeParam && ['ground_up','acquisition','refi','owner_user'].indexOf(dealTypeParam)>-1){
       setDealType(dealTypeParam);
     }
     var appraisedValue = params.get('appraisedValue');
