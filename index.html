@@ -175,7 +175,7 @@
         <option value="https://cobaltcommercialcredit.github.io/cobalt-hub/">🏠 Terminal</option>
         <option value="https://cobaltcommercialcredit.github.io/cobalt-crm/">CRM</option>
         <option value="https://cobaltcommercialcredit.github.io/cobalt-debt-deals/">Pipeline</option>
-        <option value="https://cobaltcommercialcredit.github.io/cobalt-prospect-engine/">CRE Cold Outreach</option>
+        <option value="https://cobaltcommercialcredit.github.io/cobalt-prospect-engine/">CRE Prospector</option>
         <option value="https://cobaltcommercialcredit.github.io/cobalt-slb-calculator/">SLB Calculator</option>
         <option value="https://cobaltcommercialcredit.github.io/cobalt-debt-capacity-calc/">Debt Capacity Calculator</option>
         <option value="https://cobaltcommercialcredit.github.io/cobalt-treasury-audit/">Treasury Firepower Audit</option>
@@ -1017,7 +1017,7 @@
     var el = $('pipelineLinkStatus');
     var btn = $('moveToPipelineBtn');
     var lines = [];
-    if(state.linkedProspectId) lines.push('🔗 From CRE Cold Outreach: <b>'+esc(state.linkedProspectName||'Untitled')+'</b>');
+    if(state.linkedProspectId) lines.push('🔗 From CRE Prospector: <b>'+esc(state.linkedProspectName||'Untitled')+'</b>');
     if(state.linkedPipelineDealId) lines.push('🔗 Already moved to Pipeline as <b>'+esc(state.linkedPipelineDealName||'Untitled')+'</b>');
     if(lines.length){
       el.style.display = 'block';
